@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/fatih/structs"
 	"github.com/gorilla/mux"
 	"github.com/malice-plugins/pkgs/database"
@@ -255,11 +255,11 @@ func main() {
 	app := cli.NewApp()
 
 	app.Name = "bitdefender"
-	app.Author = "blacktop"
-	app.Email = "https://github.com/blacktop"
+	app.Author = "JB"
+	app.Email = "https://github.com/RBTH84"
 	app.Version = Version + ", BuildTime: " + BuildTime
 	app.Compiled, _ = time.Parse("20060102", BuildTime)
-	app.Usage = "Malice Bitdefender AntiVirus Plugin"
+	app.Usageitdefender "AntiVirus Plugin"
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
 			Name:  "verbose, V",

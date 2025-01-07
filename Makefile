@@ -1,136 +1,76 @@
-REPO=malice-plugins/bitdefender
-ORG=malice
-NAME=bitdefender
-CATEGORY=av
-VERSION?=$(shell cat VERSION)
+# Makefile for Bitdefender plugin
 
-MALWARE=tests/malware
-NOT_MALWARE=tests/not.malware
+# Variables
+APP_NAME := bitdefender
+BUILD_DIR := build
+SRC_FILES := scan.go
+DOCKER_IMAGE := bitdefender-plugin:latest
+GO_CMD := go
+LINT_CMD := golangci-lint
+TEST_CMD := go test
 
-BDKEY?=$(shell cat bd.key)
+# Default target
+.PHONY: all
+all: build
 
-
-all: build size tag test test_markdown
-
+# Build the binary
 .PHONY: build
 build:
-	docker build --build-arg BDKEY=${BDKEY} -t $(ORG)/$(NAME):$(VERSION) .
+	@echo "Building $(APP_NAME)..."
+	$(GO_CMD) build -o $(BUILD_DIR)/$(APP_NAME) $(SRC_FILES)
 
-.PHONY: size
-size:
-	sed -i.bu 's/docker%20image-.*-blue/docker%20image-$(shell docker images --format "{{.Size}}" $(ORG)/$(NAME):$(VERSION)| cut -d' ' -f1)-blue/' README.md
-
-.PHONY: tag
-tag:
-	docker tag $(ORG)/$(NAME):$(VERSION) $(ORG)/$(NAME):latest
-
-.PHONY: tags
-tags:
-	docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" $(ORG)/$(NAME)
-
-.PHONY: push
-push:
-	echo ${GITHUB_PACKAGES} | docker login docker.pkg.github.com -u blacktop --password-stdin
-	docker tag $(ORG)/$(NAME):$(VERSION) docker.pkg.github.com/$(REPO)/$(CATEGORY):$(VERSION)
-	docker push docker.pkg.github.com/$(REPO)/$(CATEGORY):$(VERSION)
-
-.PHONY: ssh
-ssh:
-	@docker run --init -it --rm --entrypoint=bash $(ORG)/$(NAME):$(VERSION)
-
-.PHONY: tar
-tar:
-	docker save $(ORG)/$(NAME):$(VERSION) -o $(NAME).tar
-
-.PHONY: gotest
-gotest:
-	go get
-	go test -v
-
-.PHONY: avtest
-avtest:
-	@echo "===> ${NAME} EICAR Test"
-	@docker run --init --rm --entrypoint=sh $(ORG)/$(NAME):$(VERSION) -c "bdscan /malware/EICAR" > tests/av_scan.out || true
-
-.PHONY: update
-update:
-	@docker run --init --rm $(ORG)/$(NAME):$(VERSION) -V update
-
-.PHONY: start_elasticsearch
-start_elasticsearch:
-ifeq ("$(shell docker inspect -f {{.State.Running}} elasticsearch)", "true")
-	@echo "===> elasticsearch already running.  Stopping now..."
-	@docker rm -f elasticsearch || true
-endif
-	@echo "===> Starting elasticsearch"
-	@docker run --init -d --name elasticsearch -p 9200:9200 malice/elasticsearch:6.6; sleep 20
-
-.PHONY: malware
-malware:
-ifeq (,$(wildcard $(MALWARE)))
-	wget https://github.com/maliceio/malice-av/raw/master/samples/befb88b89c2eb401900a68e9f5b78764203f2b48264fcc3f7121bf04a57fd408 -O $(MALWARE)
-	cd tests; echo "TEST" > not.malware
-endif
-
-.PHONY: test_all
-test_all: test test_elastic test_markdown test_web
-
+# Run tests
 .PHONY: test
-test: malware
-	@echo "===> ${NAME} --help"
-	docker run --init --rm $(ORG)/$(NAME):$(VERSION) --help
-	docker run --init --rm -v $(PWD):/malware $(ORG)/$(NAME):$(VERSION) -V $(MALWARE) | jq . > docs/results.json
-	cat docs/results.json | jq .
+test:
+	@echo "Running tests..."
+	$(TEST_CMD) ./...
 
-.PHONY: test_elastic
-test_elastic: start_elasticsearch malware
-	@echo "===> ${NAME} test_elastic found"
-	docker run --rm --link elasticsearch -e MALICE_ELASTICSEARCH_URL=http://elasticsearch:9200 -v $(PWD):/malware $(ORG)/$(NAME):$(VERSION) -V $(MALWARE)
-	@echo "===> ${NAME} test_elastic NOT found"
-	docker run --rm --link elasticsearch -e MALICE_ELASTICSEARCH_URL=http://elasticsearch:9200 -v $(PWD):/malware $(ORG)/$(NAME):$(VERSION) -V $(NOT_MALWARE)
-	http localhost:9200/malice/_search | jq . > docs/elastic.json
+# Lint the code
+.PHONY: lint
+lint:
+	@echo "Running linter..."
+	$(LINT_CMD) run
 
-.PHONY: test_markdown
-test_markdown: test_elastic
-	@echo "===> ${NAME} test_markdown"
-	# http localhost:9200/malice/_search query:=@docs/query.json | jq . > docs/elastic.json
-	cat docs/elastic.json | jq -r '.hits.hits[] ._source.plugins.${CATEGORY}.${NAME}.markdown' > docs/SAMPLE.md
-
-.PHONY: test_web
-test_web: malware stop
-	@echo "===> Starting web service"
-	@docker run -d --name $(NAME) -p 3993:3993 $(ORG)/$(NAME):$(VERSION) web
-	http -f localhost:3993/scan malware@$(MALWARE)
-	@echo "===> Stopping web service"
-	@docker logs $(NAME)
-	@docker rm -f $(NAME)
-
-.PHONY: stop
-stop: ## Kill running docker containers
-	@docker rm -f $(NAME) || true
-
-.PHONY: circle
-circle: ci-size
-	@sed -i.bu 's/docker%20image-.*-blue/docker%20image-$(shell cat .circleci/size)-blue/' README.md
-	@echo "===> Image size is: $(shell cat .circleci/size)"
-
-ci-build:
-	@echo "===> Getting CircleCI build number"
-	@http https://circleci.com/api/v1.1/project/github/${REPO} | jq '.[0].build_num' > .circleci/build_num
-
-ci-size: ci-build
-	@echo "===> Getting artifact sizes from CircleCI"
-	@cd .circleci; rm size nsrl bloom || true
-	@http https://circleci.com/api/v1.1/project/github/${REPO}/$(shell cat .circleci/build_num)/artifacts${CIRCLE_TOKEN} | jq -r ".[] | .url" | xargs wget -q -P .circleci
-
+# Clean build files
+.PHONY: clean
 clean:
-	docker-clean stop
-	docker image rm $(ORG)/$(NAME):$(VERSION)
-	docker image rm $(ORG)/$(NAME):latest
-	rm $(MALWARE)
+	@echo "Cleaning up..."
+	rm -rf $(BUILD_DIR)
 
-# Absolutely awesome: http://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
+# Run the application in local mode
+.PHONY: run
+run:
+	@echo "Running $(APP_NAME)..."
+	$(GO_CMD) run $(SRC_FILES) web
+
+# Build Docker image
+.PHONY: docker-build
+docker-build:
+	@echo "Building Docker image..."
+	docker build -t $(DOCKER_IMAGE) .
+
+# Run Docker container
+.PHONY: docker-run
+docker-run:
+	@echo "Running Docker container..."
+	docker run --rm -p 3993:3993 -v $(PWD)/malware:/malware $(DOCKER_IMAGE)
+
+# Push Docker image (example)
+.PHONY: docker-push
+docker-push:
+	@echo "Pushing Docker image to registry..."
+	docker push $(DOCKER_IMAGE)
+
+# Help target to display available commands
+.PHONY: help
 help:
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@echo "Available targets:"
+	@echo "  build         - Build the binary"
+	@echo "  test          - Run tests"
+	@echo "  lint          - Lint the code"
+	@echo "  clean         - Clean build files"
+	@echo "  run           - Run the application locally"
+	@echo "  docker-build  - Build the Docker image"
+	@echo "  docker-run    - Run the application in Docker"
+	@echo "  docker-push   - Push the Docker image to registry"
 
-.DEFAULT_GOAL := all

@@ -1,0 +1,214 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/gorilla/mux"
+)
+
+const (
+	name     = "bitdefender"
+	category = "av"
+)
+
+var (
+	Version   string
+	BuildTime string
+	path      string
+)
+
+type pluginResults struct {
+	ID   string      `json:"id" structs:"id,omitempty"`
+	Data ResultsData `json:"bitdefender" structs:"bitdefender"`
+}
+
+type Bitdefender struct {
+	Results ResultsData `json:"bitdefender"`
+}
+
+type ResultsData struct {
+	Infected bool   `json:"infected" structs:"infected"`
+	Result   string `json:"result" structs:"result"`
+	Engine   string `json:"engine" structs:"engine"`
+	Updated  string `json:"updated" structs:"updated"`
+	MarkDown string `json:"markdown,omitempty" structs:"markdown,omitempty"`
+}
+
+// assert handles fatal errors
+func assert(err error) {
+	if err != nil {
+		log.WithFields(log.Fields{
+			"plugin":   name,
+			"category": category,
+			"path":     path,
+		}).Fatal(err)
+	}
+}
+
+// setupInstaller sets up Bitdefender using the installer script
+func setupInstaller() {
+	log.Info("Setting up Bitdefender...")
+
+	// Execute the installer script
+	cmd := exec.Command("/app/installer/installer")
+	cmd.Env = append(os.Environ(),
+		"CONFIG_URL=https://example.com/config",
+		"STATUS_LINK=https://example.com/status",
+		"LOGINPASSWD=my_secure_password",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.WithFields(log.Fields{
+			"output": string(output),
+		}).Fatal("Failed to set up Bitdefender: ", err)
+	}
+
+	log.Info("Bitdefender setup completed successfully")
+}
+
+// AvScan performs antivirus scanning
+func AvScan(timeout int) Bitdefender {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	results, err := exec.CommandContext(ctx, "bdscan", path).CombinedOutput()
+	if err != nil {
+		log.WithError(err).Error("Error during scan")
+		return Bitdefender{}
+	}
+
+	return Bitdefender{
+		Results: ParseBitdefenderOutput(string(results), nil),
+	}
+}
+
+// ParseBitdefenderOutput parses Bitdefender scan output
+func ParseBitdefenderOutput(output string, err error) ResultsData {
+	if err != nil {
+		log.WithError(err).Error("Error parsing Bitdefender output")
+		return ResultsData{}
+	}
+
+	result := ResultsData{Infected: false}
+	lines := strings.Split(output, "\n")
+
+	for _, line := range lines {
+		if strings.Contains(line, "infected:") {
+			result.Result = strings.TrimSpace(strings.Split(line, "infected:")[1])
+			result.Infected = true
+		}
+		if strings.Contains(line, "Unices v") {
+			for _, word := range strings.Fields(line) {
+				if strings.HasPrefix(word, "v") {
+					result.Engine = strings.TrimPrefix(word, "v")
+				}
+			}
+		}
+	}
+	result.Updated = getUpdatedDate()
+	return result
+}
+
+func getUpdatedDate() string {
+	file := "/opt/malice/UPDATED"
+	if _, err := os.Stat(file); os.IsNotExist(err) {
+		return BuildTime
+	}
+	data, err := ioutil.ReadFile(file)
+	if err != nil {
+		log.WithError(err).Error("Failed to read updated file")
+		return BuildTime
+	}
+	return string(data)
+}
+
+func webService() {
+	router := mux.NewRouter().StrictSlash(true)
+	router.HandleFunc("/scan", webAvScan).Methods("POST")
+
+	log.Info("Web service listening on port :3993")
+	log.Fatal(http.ListenAndServe(":3993", router))
+}
+
+func webAvScan(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		log.WithError(err).Error("Failed to parse form")
+		return
+	}
+
+	file, _, err := r.FormFile("malware")
+	if err != nil {
+		http.Error(w, "Failed to retrieve file", http.StatusBadRequest)
+		log.WithError(err).Error("Failed to retrieve file")
+		return
+	}
+	defer file.Close()
+
+	tmpfile, err := ioutil.TempFile("/malware", "web_")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		log.WithError(err).Error("Failed to create temp file")
+		return
+	}
+	defer os.Remove(tmpfile.Name())
+
+	data, err := ioutil.ReadAll(file)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		log.WithError(err).Error("Failed to read file data")
+		return
+	}
+
+	if _, err = tmpfile.Write(data); err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		log.WithError(err).Error("Failed to write data to temp file")
+		return
+	}
+
+	path = tmpfile.Name()
+	bitdefender := AvScan(60)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(bitdefender); err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		log.WithError(err).Error("Failed to encode response")
+	}
+}
+
+func main() {
+	log.SetFormatter(&log.JSONFormatter{})
+	log.SetLevel(log.InfoLevel)
+
+	if len(os.Args) < 2 {
+		log.Fatal("Please provide arguments for execution")
+	}
+
+	command := os.Args[1]
+	switch command {
+	case "web":
+		setupInstaller()
+		webService()
+	case "scan":
+		if len(os.Args) < 3 {
+			log.Fatal("Please provide a file path to scan")
+		}
+		path = os.Args[2]
+		AvScan(60)
+	default:
+		log.Fatal("Invalid command")
+	}
+}
+
