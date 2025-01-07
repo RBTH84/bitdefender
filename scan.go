@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/fatih/structs"
 	"github.com/gorilla/mux"
 	"github.com/malice-plugins/pkgs/database"
@@ -21,6 +20,7 @@ import (
 	"github.com/malice-plugins/pkgs/utils"
 	"github.com/parnurzeal/gorequest"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
@@ -259,7 +259,7 @@ func main() {
 	app.Email = "https://github.com/RBTH84"
 	app.Version = Version + ", BuildTime: " + BuildTime
 	app.Compiled, _ = time.Parse("20060102", BuildTime)
-	app.Usageitdefender "AntiVirus Plugin"
+	app.Usage = "Bitdefender_AntiVirus_Plugin"
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
 			Name:  "verbose, V",

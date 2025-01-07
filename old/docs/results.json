@@ -1,8 +1,0 @@
-{
-  "bitdefender": {
-    "infected": true,
-    "result": "Backdoor.Lecna.AB",
-    "engine": "7.141118",
-    "updated": "20190209"
-  }
-}

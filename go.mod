@@ -1,4 +1,4 @@
-module home/jb/Bureau/Avast_plugin
+module github.com/RBTH84/bitdefender
 
 go 1.20
 

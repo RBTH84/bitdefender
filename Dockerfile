@@ -13,6 +13,7 @@ RUN go mod edit -replace github.com/Sirupsen/logrus=github.com/sirupsen/logrus@v
     go mod tidy
 
 # Construire le binaire
+
 RUN go build -ldflags "-s -w -X main.Version=$(cat VERSION || echo 'v1.0.0') -X main.BuildTime=$(date -u +%Y%m%d)" -o /bin/avscan
 
 ####################################################
