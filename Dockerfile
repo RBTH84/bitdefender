@@ -41,8 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     /opt/BitDefender-scanner/bin/bdscan --update || true && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
-    chmod -R +x bd_fix.sh && \
     bash bd_fix.sh
+    
 
 
 # Copier le binaire construit dans la première étape
